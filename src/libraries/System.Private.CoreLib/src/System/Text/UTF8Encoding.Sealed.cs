@@ -2,6 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 
 namespace System.Text
 {
@@ -18,6 +22,9 @@ namespace System.Text
             /// Maximum number of input elements we'll allow for going through the fast one-pass stackalloc code paths.
             /// </summary>
             private const int MaxSmallInputElementCount = 32;
+
+            // Break even slightly above 256 for x64
+            private static readonly uint MaxSmallInputElementCountGetBytes = Vector128.IsHardwareAccelerated ? 200u : 16u;
 
             public UTF8EncodingSealed(bool encoderShouldEmitUTF8Identifier) : base(encoderShouldEmitUTF8Identifier) { }
 
@@ -145,6 +152,125 @@ namespace System.Text
                 }
 
                 return new string(new ReadOnlySpan<char>(ref *pDestination, charsWritten)); // this overload of ROS ctor doesn't validate length
+            }
+
+            public override unsafe int GetBytes(char* chars, int charCount, byte* bytes, int byteCount)
+            {
+                if (chars != null
+                    && bytes != null
+                    && byteCount >= charCount
+                    // Break even slightly above 256 for x64
+                    && (uint)charCount < MaxSmallInputElementCountGetBytes)
+                {
+                    return GetBytesForSmallInput(chars, charCount, bytes, byteCount);
+                }
+                else
+                {
+                    return base.GetBytes(chars, charCount, bytes, byteCount);
+                }
+            }
+
+            private static readonly Vector128<ushort> VectorContainsNonAsciiCharMask = Vector128.Create(unchecked((ushort)0xff80));
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private unsafe int GetBytesForSmallInput(char* chars, int charCount, byte* bytes, int byteCount)
+            {
+                uint i = 0;
+                if (Vector128.IsHardwareAccelerated && charCount >= Vector128<ushort>.Count)
+                {
+                    // Read mask from static variable to prevent multiple reads when using variable
+                    Vector128<ushort> mask = VectorContainsNonAsciiCharMask;
+
+                    uint maxSimdIndex = (uint)(charCount - Vector128<ushort>.Count);
+                    for (i = 0; i < maxSimdIndex; i += (uint)Vector128<ushort>.Count)
+                    {
+                        Vector128<ushort> v = *(Vector128<ushort>*)(chars + i);
+                        if (VectorContainsNonAsciiChar(v, mask))
+                            goto NonAscii;
+
+                        StoreLower((long*)(bytes + i), ExtractAsciiVector(v, v));
+                    }
+
+                    // Read last full vector and do a (possibly overlapping) store if successfull
+                    Vector128<ushort> v2 = *(Vector128<ushort>*)(chars + maxSimdIndex);
+                    if (VectorContainsNonAsciiChar(v2, mask))
+                        goto NonAscii;
+
+                    Vector128<byte> packed = ExtractAsciiVector(v2, v2);
+                    StoreLower((long*)(bytes + charCount - sizeof(long)), packed);
+                    return charCount;
+                }
+                else
+                {
+                    for (; i < (uint)charCount; ++i)
+                    {
+                        char t = chars[i];
+                        if (t >= 0x80)
+                            goto NonAscii;
+
+                        bytes[i] = (byte)t;
+                    }
+                    return charCount;
+                }
+
+            NonAscii:
+                return (int)i + GetBytesCommon(chars + i, charCount - (int)i, bytes + i, byteCount - (int)i);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private static unsafe void StoreLower(long* address, Vector128<byte> source)
+            {
+                // Allow a single 8 byte store on 32bit for x86
+                if (Sse2.IsSupported)
+                    Sse2.StoreScalar(address, source.AsInt64());
+                else
+                    *address = source.AsInt64().ToScalar();
+            }
+
+            // Is it OK to make this System.Text.Ascii.ExtractAsciiVector internal and use it instead ?
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private static Vector128<byte> ExtractAsciiVector(Vector128<ushort> vectorFirst, Vector128<ushort> vectorSecond)
+            {
+                // Narrows two vectors of words [ w7 w6 w5 w4 w3 w2 w1 w0 ] and [ w7' w6' w5' w4' w3' w2' w1' w0' ]
+                // to a vector of bytes [ b7 ... b0 b7' ... b0'].
+
+                // prefer architecture specific intrinsic as they don't perform additional AND like Vector128.Narrow does
+                if (Sse2.IsSupported)
+                {
+                    return Sse2.PackUnsignedSaturate(vectorFirst.AsInt16(), vectorSecond.AsInt16());
+                }
+                else if (AdvSimd.Arm64.IsSupported)
+                {
+                    return AdvSimd.Arm64.UnzipEven(vectorFirst.AsByte(), vectorSecond.AsByte());
+                }
+                else
+                {
+                    return Vector128.Narrow(vectorFirst, vectorSecond);
+                }
+            }
+
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private static bool VectorContainsNonAsciiChar(Vector128<ushort> utf16Vector, Vector128<ushort> mask)
+            {
+                // prefer architecture specific intrinsic as they offer better perf
+                if (Sse41.IsSupported)
+                {
+                    // If a non-ASCII bit is set in any WORD of the vector, we have seen non-ASCII data.
+                    return !Sse41.TestZ(utf16Vector, mask);
+                }
+                else if (AdvSimd.Arm64.IsSupported)
+                {
+                    // First we pick four chars, a larger one from all four pairs of adjecent chars in the vector.
+                    // If any of those four chars has a non-ASCII bit set, we have seen non-ASCII data.
+                    Vector128<ushort> maxChars = AdvSimd.Arm64.MaxPairwise(utf16Vector, utf16Vector);
+                    return (maxChars.AsUInt64().ToScalar() & 0xFF80FF80FF80FF80) != 0;
+                }
+                else
+                {
+                    // If a non-ASCII bit is set in any WORD of the vector, we have seen non-ASCII data.
+                    return (utf16Vector & mask) != Vector128<ushort>.Zero;
+                }
             }
         }
     }

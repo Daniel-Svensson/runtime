@@ -361,7 +361,14 @@ namespace System.Xml
 
         protected unsafe int UnsafeGetUTF8Length(char* chars, int charCount)
         {
-            return (_encoding ?? DataContractSerializer.ValidatingUTF8).GetByteCount(chars, charCount);
+            if (_encoding is not { } encoding)
+            {
+                return DataContractSerializer.ValidatingUTF8.GetByteCount(chars, charCount);
+            }
+            else
+            {
+                return encoding.GetByteCount(chars, charCount);
+            }
         }
 
         protected unsafe int UnsafeGetUTF8Chars(char* chars, int charCount, byte[] buffer, int offset)
@@ -370,28 +377,36 @@ namespace System.Xml
             {
                 fixed (byte* _bytes = &buffer[offset])
                 {
-                    byte* bytes = _bytes;
-                    char* charsMax = &chars[charCount];
-
-                    // Fast path for small strings, skip and use Encoding.GetBytes for larger strings since it is faster
-                    if (charCount < 32)
+                    if (_encoding is not { } encoding)
                     {
-                        while (chars < charsMax)
-                        {
-                            char t = *chars;
-                            if (t >= 0x80)
-                                goto NonAscii;
-
-                            *bytes = (byte)t;
-                            bytes++;
-                            chars++;
-                        }
-                        return charCount;
+                        return Encoding.UTF8.GetBytes(chars, charCount, _bytes, buffer.Length - offset);
                     }
+                    else
+                    {
+                        return encoding.GetBytes(chars, charCount, _bytes, buffer.Length - offset);
+                        //    byte* bytes = _bytes;
+                        //    char* charsMax = &chars[charCount];
 
-                NonAscii:
-                    byte* bytesMax = _bytes + buffer.Length - offset;
-                    return (int)(bytes - _bytes) + (_encoding ?? DataContractSerializer.ValidatingUTF8).GetBytes(chars, (int)(charsMax - chars), bytes, (int)(bytesMax - bytes));
+                        //    // Fast path for small strings, skip and use Encoding.GetBytes for larger strings since it is faster
+                        //    if (charCount < 32)
+                        //    {
+                        //        while (chars < charsMax)
+                        //        {
+                        //            char t = *chars;
+                        //            if (t >= 0x80)
+                        //                goto NonAscii;
+
+                        //            *bytes = (byte)t;
+                        //            bytes++;
+                        //            chars++;
+                        //        }
+                        //        return charCount;
+                        //    }
+
+                        //NonAscii:
+                        //    byte* bytesMax = _bytes + buffer.Length - offset;
+                        //    return (int)(bytes - _bytes) + encoding.GetBytes(chars, (int)(charsMax - chars), bytes, (int)(bytesMax - bytes));
+                    }
                 }
             }
             return 0;
