@@ -2,11 +2,8 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.IO;
-using System.Numerics;
 using System.Text;
 using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 
@@ -373,43 +370,38 @@ namespace System.Xml
 
         protected unsafe int UnsafeGetUTF8Chars(char* chars, int charCount, byte[] buffer, int offset)
         {
-            if (charCount > 0)
+            if (charCount <= 0)
+                return 0;
+
+            fixed (byte* _bytes = &buffer[offset])
             {
-                fixed (byte* _bytes = &buffer[offset])
+                // Fast path for small strings, skip and use Encoding.GetBytes for larger strings since it is faster
+                if (charCount < 8)
                 {
-                    if (_encoding is not { } encoding)
+                    byte* bytes = _bytes;
+                    char* charsMax = &chars[charCount];
+
+                    while (chars < charsMax)
                     {
-                        return Encoding.UTF8.GetBytes(chars, charCount, _bytes, buffer.Length - offset);
+                        char t = *chars;
+                        if (t >= 0x80)
+                            goto NonAscii;
+
+                        *bytes = (byte)t;
+                        bytes++;
+                        chars++;
                     }
-                    else
-                    {
-                        return encoding.GetBytes(chars, charCount, _bytes, buffer.Length - offset);
-                        //    byte* bytes = _bytes;
-                        //    char* charsMax = &chars[charCount];
+                    return charCount;
 
-                        //    // Fast path for small strings, skip and use Encoding.GetBytes for larger strings since it is faster
-                        //    if (charCount < 32)
-                        //    {
-                        //        while (chars < charsMax)
-                        //        {
-                        //            char t = *chars;
-                        //            if (t >= 0x80)
-                        //                goto NonAscii;
-
-                        //            *bytes = (byte)t;
-                        //            bytes++;
-                        //            chars++;
-                        //        }
-                        //        return charCount;
-                        //    }
-
-                        //NonAscii:
-                        //    byte* bytesMax = _bytes + buffer.Length - offset;
-                        //    return (int)(bytes - _bytes) + encoding.GetBytes(chars, (int)(charsMax - chars), bytes, (int)(bytesMax - bytes));
-                    }
+                NonAscii:
+                    byte* bytesMax = _bytes + buffer.Length - offset;
+                    return (int)(bytes - _bytes) + (_encoding ?? Encoding.UTF8).GetBytes(chars, (int)(charsMax - chars), bytes, (int)(bytesMax - bytes));
+                }
+                else
+                {
+                    return (_encoding ?? Encoding.UTF8).GetBytes(chars, charCount, _bytes, buffer.Length - offset);
                 }
             }
-            return 0;
         }
 
         protected virtual void FlushBuffer()

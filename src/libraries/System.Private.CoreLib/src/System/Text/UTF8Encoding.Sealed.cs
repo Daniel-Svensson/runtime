@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
@@ -24,7 +25,7 @@ namespace System.Text
             private const int MaxSmallInputElementCount = 32;
 
             // Break even slightly above 256 for x64
-            private static readonly uint MaxSmallInputElementCountGetBytes = Vector128.IsHardwareAccelerated ? 200u : 16u;
+            private static readonly uint GetBytesSmallInputMaxElementCount = Vector128.IsHardwareAccelerated ? 128u : 16u;
 
             public UTF8EncodingSealed(bool encoderShouldEmitUTF8Identifier) : base(encoderShouldEmitUTF8Identifier) { }
 
@@ -160,7 +161,7 @@ namespace System.Text
                     && bytes != null
                     && byteCount >= charCount
                     // Break even slightly above 256 for x64
-                    && (uint)charCount < MaxSmallInputElementCountGetBytes)
+                    && (uint)charCount <= GetBytesSmallInputMaxElementCount)
                 {
                     return GetBytesForSmallInput(chars, charCount, bytes, byteCount);
                 }
@@ -170,6 +171,24 @@ namespace System.Text
                 }
             }
 
+            public override unsafe int GetBytes(ReadOnlySpan<char> chars, Span<byte> bytes)
+            {
+                fixed (char* charsPtr = &MemoryMarshal.GetReference(chars))
+                fixed (byte* bytesPtr = &MemoryMarshal.GetReference(bytes))
+                {
+                    if (chars.Length <= bytes.Length
+                        && (uint)chars.Length <= GetBytesSmallInputMaxElementCount)
+                    {
+                        return GetBytesForSmallInput(charsPtr, chars.Length, bytesPtr, bytes.Length);
+                    }
+                    else
+                    {
+                        return GetBytesCommon(charsPtr, chars.Length, bytesPtr, bytes.Length);
+                    }
+                }
+            }
+
+            // Read mask from static variable to prevent multiple reads when using variable
             private static readonly Vector128<ushort> VectorContainsNonAsciiCharMask = Vector128.Create(unchecked((ushort)0xff80));
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -214,8 +233,12 @@ namespace System.Text
                 }
 
             NonAscii:
-                return (int)i + GetBytesCommon(chars + i, charCount - (int)i, bytes + i, byteCount - (int)i);
+                return (int)i + GetBytesCommonNoInline(chars + i, charCount - (int)i, bytes + i, byteCount - (int)i);
             }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            private unsafe int GetBytesCommonNoInline(char* pChars, int charCount, byte* pBytes, int byteCount)
+                => GetBytesCommon(pChars, charCount, pBytes, byteCount);
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private static unsafe void StoreLower(long* address, Vector128<byte> source)
