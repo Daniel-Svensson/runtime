@@ -1186,6 +1186,8 @@ namespace System.Text
                     }
 
                     currentOffset = NarrowUtf16ToAscii_Intrinsified(pUtf16Buffer, pAsciiBuffer, elementCount);
+                    if (currentOffset == elementCount)
+                        goto Finish;
                 }
             }
             else if (Vector.IsHardwareAccelerated)
@@ -1537,7 +1539,7 @@ namespace System.Text
             Debug.Assert(elementCount - currentOffsetInElements >= SizeOfVector128, "We should be able to run at least one whole vector.");
 
             nuint finalOffsetWhereCanRunLoop = elementCount - SizeOfVector128;
-            do
+            while (currentOffsetInElements < finalOffsetWhereCanRunLoop)
             {
                 // In a loop, perform two unaligned reads, narrow to a single vector, then aligned write one vector.
 
@@ -1557,7 +1559,27 @@ namespace System.Text
                 asciiVector.StoreUnsafe(ref asciiBuffer, currentOffsetInElements);
 
                 currentOffsetInElements += SizeOfVector128;
-            } while (currentOffsetInElements <= finalOffsetWhereCanRunLoop);
+            }
+
+            // Process a last vector pair doing a possibly overlapping read and write
+            utf16VectorFirst = Vector128.LoadUnsafe(ref utf16Buffer, finalOffsetWhereCanRunLoop);
+            Vector128<ushort> utf16VectorSecond2 = Vector128.LoadUnsafe(ref utf16Buffer, finalOffsetWhereCanRunLoop + SizeOfVector128 / sizeof(short));
+            Vector128<ushort> finalCombinedVector = utf16VectorFirst | utf16VectorSecond2;
+
+            if (VectorContainsNonAsciiChar(finalCombinedVector))
+            {
+                if (VectorContainsNonAsciiChar(utf16VectorFirst))
+                    goto Finish;
+
+                asciiVector = ExtractAsciiVector(utf16VectorFirst, utf16VectorFirst);
+                StoreLower(asciiVector, ref asciiBuffer, finalOffsetWhereCanRunLoop);
+                currentOffsetInElements = finalOffsetWhereCanRunLoop + (SizeOfVector128 / 2);
+                goto Finish;
+            }
+
+            asciiVector = ExtractAsciiVector(utf16VectorFirst, utf16VectorSecond2);
+            asciiVector.StoreUnsafe(ref asciiBuffer, finalOffsetWhereCanRunLoop);
+            currentOffsetInElements = elementCount;
 
         Finish:
 
