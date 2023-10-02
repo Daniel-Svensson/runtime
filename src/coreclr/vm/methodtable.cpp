@@ -2174,6 +2174,17 @@ BOOL MethodTable::IsClassPreInited()
 
 namespace
 {
+    bool IsFallbackDefaultInterfaceMethod(_In_ MethodDesc* pMD)
+    {
+        LIMITED_METHOD_CONTRACT;
+
+        HRESULT hr = pMD->GetCustomAttribute(
+            WellKnownAttribute::PreserveBaseOverridesAttribute,
+            nullptr,
+            nullptr);
+        return hr == S_OK;
+    }
+
     // Does this type have fields that are implicitly defined through repetition and not explicitly defined in metadata?
     bool HasImpliedRepeatedFields(MethodTable* pMT, MethodTable* pFirstFieldValueType = nullptr)
     {
@@ -6597,6 +6608,18 @@ BOOL MethodTable::FindDefaultInterfaceImplementation(
         }
         else if (pBestCandidateMT != candidates[i].pMT)
         {
+            // If one implementation is a low priority "fallback" implementation use the other one
+            if (IsFallbackDefaultInterfaceMethod(candidates[i].pMD) && !IsFallbackDefaultInterfaceMethod(pBestCandidateMD))
+            {
+                continue;
+            }
+            else if (!IsFallbackDefaultInterfaceMethod(candidates[i].pMD) && IsFallbackDefaultInterfaceMethod(pBestCandidateMD))
+            {
+                pBestCandidateMT = candidates[i].pMT;
+                pBestCandidateMD = candidates[i].pMD;
+                continue;
+            }
+
             bool throwOnConflict = (findDefaultImplementationFlags & FindDefaultInterfaceImplementationFlags::ThrowOnConflict) != FindDefaultInterfaceImplementationFlags::None;
 
             if (throwOnConflict)
