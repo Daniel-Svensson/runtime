@@ -38,7 +38,7 @@ enum class WellKnownAttribute : DWORD
     ObjectiveCTrackedTypeAttribute,
     InlineArrayAttribute,
     UnsafeAccessorAttribute,
-
+    FallbackInterfaceMethodAttribute,
     CountOfWellKnownAttributes
 };
 
@@ -110,6 +110,8 @@ inline const char *GetWellKnownAttributeName(WellKnownAttribute attribute)
             return "System.Runtime.CompilerServices.InlineArrayAttribute";
         case WellKnownAttribute::UnsafeAccessorAttribute:
             return "System.Runtime.CompilerServices.UnsafeAccessorAttribute";
+        case WellKnownAttribute::FallbackInterfaceMethodAttribute:
+            return "System.Runtime.CompilerServices.Internal.FallbackInterfaceMethodAttribute";
         case WellKnownAttribute::CountOfWellKnownAttributes:
         default:
             break; // Silence compiler warnings

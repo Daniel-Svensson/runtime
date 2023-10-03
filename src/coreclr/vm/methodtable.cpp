@@ -2179,7 +2179,7 @@ namespace
         LIMITED_METHOD_CONTRACT;
 
         HRESULT hr = pMD->GetCustomAttribute(
-            WellKnownAttribute::PreserveBaseOverridesAttribute,
+            WellKnownAttribute::FallbackInterfaceMethodAttribute,
             nullptr,
             nullptr);
         return hr == S_OK;
@@ -6609,11 +6609,13 @@ BOOL MethodTable::FindDefaultInterfaceImplementation(
         else if (pBestCandidateMT != candidates[i].pMT)
         {
             // If one implementation is a low priority "fallback" implementation use the other one
-            if (IsFallbackDefaultInterfaceMethod(candidates[i].pMD) && !IsFallbackDefaultInterfaceMethod(pBestCandidateMD))
+            bool candidateIsFallback = IsFallbackDefaultInterfaceMethod(candidates[i].pMD);
+            bool bestCandidateIsFallback = IsFallbackDefaultInterfaceMethod(pBestCandidateMD);
+            if (candidateIsFallback && !bestCandidateIsFallback)
             {
                 continue;
             }
-            else if (!IsFallbackDefaultInterfaceMethod(candidates[i].pMD) && IsFallbackDefaultInterfaceMethod(pBestCandidateMD))
+            else if (!candidateIsFallback && bestCandidateIsFallback)
             {
                 pBestCandidateMT = candidates[i].pMT;
                 pBestCandidateMD = candidates[i].pMD;
