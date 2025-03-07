@@ -159,16 +159,6 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static unsafe ulong BigMul(uint a, uint b)
         {
-#if false // TARGET_32BIT
-            // This generates slower code currently than the simple multiplication
-            // https://github.com/dotnet/runtime/issues/11782
-            if (Bmi2.IsSupported)
-            {
-                uint low;
-                uint high = Bmi2.MultiplyNoFlags(a, b, &low);
-                return ((ulong)high << 32) | low;
-            }
-#endif
             return ((ulong)a) * b;
         }
 
@@ -217,10 +207,11 @@ namespace System
         {
             if (Bmi2.X64.IsSupported)
             {
-                ulong tmp;
-                ulong high = Bmi2.X64.MultiplyNoFlags(a, b, &tmp);
-                low = tmp;
-                return high;
+                // Ideally we should emit a single mul similar to how GT_MUL_LONG is handled in jit (best since it does smart transformm) or a single mulx.
+                // Currently we do duble mul to get better worse case performance as long as low part of MultiplyNoFlags is not used (see https://github.com/dotnet/runtime/issues/11782).
+                ulong unused;
+                low = a * b;
+                return Bmi2.X64.MultiplyNoFlags(a, b, &unused);
             }
             else if (ArmBase.Arm64.IsSupported)
             {

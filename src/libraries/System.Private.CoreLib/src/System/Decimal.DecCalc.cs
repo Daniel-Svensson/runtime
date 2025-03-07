@@ -1369,11 +1369,7 @@ ThrowOverflow:
                     do
                     {
                         uint power = scale >= MaxInt32Scale ? TenToPowerNine : UInt32Powers10[scale];
-                        // Ideally we should be able to call `ulong tmp = Math.BigMul(low64, power, out low64);` here, but it has worse performance on some hardware due to usage of MultiplyNoFlags
-                        ulong tmpLow = Math.BigMul((uint)low64, power);
-                        ulong tmp = Math.BigMul((uint)(low64 >> 32), power) + (tmpLow >> 32);
-                        low64 = (uint)tmpLow + (tmp << 32);
-                        tmp >>= 32;
+                        ulong tmp = Math.BigMul(low64, power, out low64);
                         tmp += Math.BigMul(high, power);
                         // If the scaled value has more than 96 significant bits then it's greater than d2
                         if (tmp > uint.MaxValue)
